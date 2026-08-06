@@ -169,6 +169,53 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Jynx Observatory orbital-J identity mark. */
+.jynx-brand-mark {
+  overflow: visible;
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--cbm-primary) 35%, transparent));
+}
+
+.jynx-brand-orbit {
+  stroke: var(--cbm-accent);
+  opacity: 0.72;
+}
+
+.jynx-brand-j {
+  stroke: var(--cbm-primary);
+}
+
+.jynx-brand-cut {
+  stroke: var(--cbm-ring);
+  opacity: 0.9;
+}
+
+.jynx-brand-node--primary { fill: var(--cbm-primary); }
+.jynx-brand-node--accent { fill: var(--cbm-accent); }
+.jynx-brand-node--ring { fill: var(--cbm-ring); }
+
+.jynx-brand-mark--animated .jynx-brand-orbit {
+  stroke-dasharray: 8 4;
+  animation: jynx-brand-orbit 3.2s linear infinite;
+}
+
+.jynx-brand-mark--animated .jynx-brand-node {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: jynx-brand-node-pulse 1.8s ease-in-out infinite;
+}
+
+.jynx-brand-mark--animated .jynx-brand-node--accent { animation-delay: 0.3s; }
+.jynx-brand-mark--animated .jynx-brand-node--ring { animation-delay: 0.6s; }
+
+@keyframes jynx-brand-orbit {
+  to { stroke-dashoffset: -24; }
+}
+
+@keyframes jynx-brand-node-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1.18); }
+}
+
 /* Jynx gets her own moving atmosphere instead of a flat coat of paint. */
 :root[data-theme="jynx"] #root > div {
   position: relative;
@@ -204,45 +251,13 @@ html, body, #root {
   100% { transform: translate3d(-1%, 3%, 0) rotate(3deg) scale(1.02); }
 }
 
-/* ── Graph loading constellation ─────────────────────────────── */
-
-.graph-loader-node {
-  fill: var(--cbm-loader);
-  animation: graph-loader-pulse 2.1s ease-in-out infinite;
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-.graph-loader-edge {
-  stroke: var(--cbm-loader);
-  stroke-opacity: 0.35;
-  stroke-width: 1.2;
-  stroke-dasharray: 90;
-  stroke-dashoffset: 90;
-  animation: graph-loader-draw 2.1s ease-in-out infinite;
-}
-
-@keyframes graph-loader-pulse {
-  0%, 100% { opacity: 0.25; transform: scale(0.8); }
-  35% { opacity: 1; transform: scale(1.15); }
-  70% { opacity: 0.45; transform: scale(0.95); }
-}
-
-@keyframes graph-loader-draw {
-  0% { stroke-dashoffset: 90; stroke-opacity: 0; }
-  40% { stroke-dashoffset: 0; stroke-opacity: 0.5; }
-  80%, 100% { stroke-dashoffset: 0; stroke-opacity: 0.15; }
-}
-
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="jynx"] #root > div::before {
     animation: none;
   }
 
-  .graph-loader-node,
-  .graph-loader-edge {
+  .jynx-brand-mark--animated .jynx-brand-orbit,
+  .jynx-brand-mark--animated .jynx-brand-node {
     animation: none;
   }
-  .graph-loader-node { opacity: 0.8; }
-  .graph-loader-edge { stroke-dashoffset: 0; stroke-opacity: 0.35; }
 }

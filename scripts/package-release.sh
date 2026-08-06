@@ -18,7 +18,7 @@ cd "$ROOT"
 usage() {
     cat <<'EOF'
 Usage: scripts/package-release.sh <goos> <goarch> [--variant standard|ui]
-                                  [--out-dir DIR] [VAR=VAL ...]
+                                  [--out-dir DIR] [--installer FILE] [VAR=VAL ...]
 
 The canonical release-archive step: identical in the release build and the
 local artifact-flow smoke lane.
@@ -29,6 +29,8 @@ local artifact-flow smoke lane.
   --variant  standard (default) | ui — selects the archive NAME prefix; the
              matching binary must already have been built (--with-ui for ui).
   --out-dir  where to place the archive (default: repository root).
+  --installer shell installer to bundle as install.sh in Unix archives
+              (default: repository install.sh; not valid for Windows).
 
 Make passthrough (VAR=VAL, forwarded to the build):
   CC= CXX=   compiler override, e.g. CC=clang CXX=clang++.
@@ -47,12 +49,15 @@ GOOS=""
 GOARCH=""
 VARIANT="standard"
 OUT_DIR="$ROOT"
+INSTALLER="$ROOT/install.sh"
+CUSTOM_INSTALLER=false
 MAKE_ARGS=()
 expect_value=""
 for arg in "$@"; do
     case "$expect_value" in
     variant) VARIANT="$arg"; expect_value=""; continue ;;
     out-dir) OUT_DIR="$arg"; expect_value=""; continue ;;
+    installer) INSTALLER="$arg"; CUSTOM_INSTALLER=true; expect_value=""; continue ;;
     esac
     case "$arg" in
     -h | --help) usage; exit 0 ;;
@@ -60,6 +65,8 @@ for arg in "$@"; do
     --variant=*) VARIANT="${arg#--variant=}" ;;
     --out-dir) expect_value="out-dir" ;;
     --out-dir=*) OUT_DIR="${arg#--out-dir=}" ;;
+    --installer) expect_value="installer" ;;
+    --installer=*) INSTALLER="${arg#--installer=}"; CUSTOM_INSTALLER=true ;;
     -*)
         echo "package-release: unknown option '$arg'. Please consult --help." >&2
         exit 2
@@ -86,6 +93,22 @@ ui) SUFFIX="-ui" ;;
 *) echo "package-release: variant must be 'standard' or 'ui'." >&2; exit 2 ;;
 esac
 [ -n "$expect_value" ] && { echo "package-release: --$expect_value needs a value." >&2; exit 2; }
+if $CUSTOM_INSTALLER; then
+    [ "$GOOS" != "windows" ] || {
+        echo "package-release: --installer is only valid for Unix archives." >&2
+        exit 2
+    }
+    case "$INSTALLER" in
+    /*) ;;
+    *) INSTALLER="$ROOT/$INSTALLER" ;;
+    esac
+fi
+if [ "$GOOS" != "windows" ]; then
+    [ -f "$INSTALLER" ] && [ ! -L "$INSTALLER" ] || {
+        echo "package-release: installer must be a regular, non-symlink file: $INSTALLER" >&2
+        exit 2
+    }
+fi
 
 BUILD_DIR="${BUILD_DIR:-build/c}"
 OUT_DIR="$(mkdir -p "$OUT_DIR" && cd "$OUT_DIR" && pwd)"
@@ -189,7 +212,9 @@ else
     strip_release_binary "$BUILD_DIR/codebase-memory-mcp" || exit 2
     bash scripts/ci/check-binary-composition.sh --variant="$VARIANT" \
         "$BUILD_DIR/codebase-memory-mcp" || exit 2
-    cp LICENSE install.sh "$BUILD_DIR/"
+    cp LICENSE "$BUILD_DIR/"
+    cp "$INSTALLER" "$BUILD_DIR/install.sh"
+    chmod 755 "$BUILD_DIR/install.sh"
     scripts/gen-third-party-notices.sh "$BUILD_DIR/THIRD_PARTY_NOTICES.md"
     tar -czf "$OUT_DIR/$NAME.tar.gz" -C "$BUILD_DIR" \
         codebase-memory-mcp LICENSE install.sh THIRD_PARTY_NOTICES.md

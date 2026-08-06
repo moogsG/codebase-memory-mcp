@@ -3,6 +3,7 @@ import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
 import { ThemeSelector } from "./components/ThemeSelector";
+import { BrandMark } from "./components/BrandMark";
 import type { TabId } from "./lib/types";
 import { useUiMessages } from "./lib/i18n";
 import {
@@ -85,10 +86,15 @@ export function App() {
       <header className="relative z-50 flex items-center justify-between px-5 h-12 border-b border-border bg-sidebar/80 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
-            <div className="w-[7px] h-[7px] rounded-full bg-primary" />
-            <span className="text-[13px] font-semibold text-foreground/90 tracking-tight">
-              Codebase Memory
-            </span>
+            <BrandMark className="h-5 w-5 shrink-0" />
+            <div className="flex items-baseline gap-2">
+              <span className="text-[13px] font-semibold text-foreground/90 tracking-tight">
+                Jynx Observatory
+              </span>
+              <span className="hidden text-[8px] font-semibold uppercase tracking-[0.2em] text-primary/70 lg:inline">
+                Jynx edition
+              </span>
+            </div>
           </div>
 
           {/* Tabs inline in header */}
