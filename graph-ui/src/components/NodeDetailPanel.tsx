@@ -112,7 +112,7 @@ export function NodeDetailPanel({
   };
 
   return (
-    <div className="w-full bg-[#0b1920]/95 backdrop-blur-xl flex flex-col h-full min-h-0 overflow-hidden">
+    <div className="w-full bg-sidebar/95 backdrop-blur-xl flex flex-col h-full min-h-0 overflow-hidden">
       {/* Header */}
       <div className="px-4 pt-4 pb-3 border-b border-border/30">
         <div className="flex items-start justify-between gap-2 mb-2">

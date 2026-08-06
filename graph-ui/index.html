@@ -1,11 +1,22 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="dark" data-theme="jynx">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Codebase Memory — Graph</title>
+    <script>
+      try {
+        const savedTheme = localStorage.getItem("cbm-theme");
+        const themes = ["jynx", "aurora", "linear", "superhuman", "ember"];
+        document.documentElement.dataset.theme = themes.includes(savedTheme)
+          ? savedTheme
+          : "jynx";
+      } catch {
+        document.documentElement.dataset.theme = "jynx";
+      }
+    </script>
   </head>
-  <body class="bg-[#0a0a10] text-[#e4e4ed] min-h-screen">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

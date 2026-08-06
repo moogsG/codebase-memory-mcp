@@ -26,7 +26,7 @@ export function ProjectCard({ project, schema, onSelect }: ProjectCardProps) {
         </div>
         <button
           onClick={() => onSelect(project.name)}
-          className="px-3 py-1 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 rounded text-xs font-medium transition-colors"
+          className="px-3 py-1 bg-primary/20 hover:bg-primary/30 text-primary rounded text-xs font-medium transition-colors"
         >
           View Graph
         </button>

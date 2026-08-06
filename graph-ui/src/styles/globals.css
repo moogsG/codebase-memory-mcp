@@ -1,29 +1,160 @@
 @import "tailwindcss";
 
 @theme inline {
-  --color-background: #0a161a;
-  --color-foreground: #e0eded;
-  --color-card: #0e2028;
-  --color-card-foreground: #e0eded;
-  --color-popover: #0e2028;
-  --color-popover-foreground: #e0eded;
-  --color-primary: #1DA27E;
-  --color-primary-foreground: #0a161a;
-  --color-secondary: #0f1e24;
-  --color-secondary-foreground: #b0d4d4;
-  --color-muted: #0f1e24;
-  --color-muted-foreground: #6a9e9e;
-  --color-accent: #1C8585;
-  --color-accent-foreground: #e0eded;
-  --color-destructive: #e05252;
-  --color-destructive-foreground: #0a161a;
-  --color-border: #1a3a4030;
-  --color-input: #0c1c2260;
-  --color-ring: #1DA27E;
+  --color-background: var(--cbm-background);
+  --color-foreground: var(--cbm-foreground);
+  --color-card: var(--cbm-card);
+  --color-card-foreground: var(--cbm-card-foreground);
+  --color-popover: var(--cbm-popover);
+  --color-popover-foreground: var(--cbm-popover-foreground);
+  --color-primary: var(--cbm-primary);
+  --color-primary-foreground: var(--cbm-primary-foreground);
+  --color-secondary: var(--cbm-secondary);
+  --color-secondary-foreground: var(--cbm-secondary-foreground);
+  --color-muted: var(--cbm-muted);
+  --color-muted-foreground: var(--cbm-muted-foreground);
+  --color-accent: var(--cbm-accent);
+  --color-accent-foreground: var(--cbm-accent-foreground);
+  --color-destructive: var(--cbm-destructive);
+  --color-destructive-foreground: var(--cbm-destructive-foreground);
+  --color-border: var(--cbm-border);
+  --color-input: var(--cbm-input);
+  --color-ring: var(--cbm-ring);
   --radius: 0.75rem;
-  --color-sidebar: #0c1a20;
+  --color-sidebar: var(--cbm-sidebar);
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root,
+:root[data-theme="jynx"] {
+  --cbm-background: #08050c;
+  --cbm-foreground: #fff3fb;
+  --cbm-card: #130b18;
+  --cbm-card-foreground: #fff3fb;
+  --cbm-popover: #190d20;
+  --cbm-popover-foreground: #fff3fb;
+  --cbm-primary: #ff3ea5;
+  --cbm-primary-foreground: #18000d;
+  --cbm-secondary: #201027;
+  --cbm-secondary-foreground: #f4cdeb;
+  --cbm-muted: #201027;
+  --cbm-muted-foreground: #b69abd;
+  --cbm-accent: #b44cff;
+  --cbm-accent-foreground: #100018;
+  --cbm-destructive: #ff4d6d;
+  --cbm-destructive-foreground: #180006;
+  --cbm-border: #4a1f57;
+  --cbm-input: #1c0d23;
+  --cbm-ring: #00e5ff;
+  --cbm-sidebar: #0e0712;
+  --cbm-graph-background: #040207;
+  --cbm-graph-light: #b44cff;
+  --cbm-loader: #ff3ea5;
+}
+
+:root[data-theme="aurora"] {
+  --cbm-background: #0a161a;
+  --cbm-foreground: #e0eded;
+  --cbm-card: #0e2028;
+  --cbm-card-foreground: #e0eded;
+  --cbm-popover: #0e2028;
+  --cbm-popover-foreground: #e0eded;
+  --cbm-primary: #1da27e;
+  --cbm-primary-foreground: #0a161a;
+  --cbm-secondary: #0f1e24;
+  --cbm-secondary-foreground: #b0d4d4;
+  --cbm-muted: #0f1e24;
+  --cbm-muted-foreground: #6a9e9e;
+  --cbm-accent: #1c8585;
+  --cbm-accent-foreground: #e0eded;
+  --cbm-destructive: #e05252;
+  --cbm-destructive-foreground: #0a161a;
+  --cbm-border: #1a3a40;
+  --cbm-input: #0c1c22;
+  --cbm-ring: #1da27e;
+  --cbm-sidebar: #0c1a20;
+  --cbm-graph-background: #06090f;
+  --cbm-graph-light: #6040ff;
+  --cbm-loader: #22d3ee;
+}
+
+:root[data-theme="linear"] {
+  --cbm-background: #08090a;
+  --cbm-foreground: #f7f8f8;
+  --cbm-card: #121315;
+  --cbm-card-foreground: #f7f8f8;
+  --cbm-popover: #191a1b;
+  --cbm-popover-foreground: #f7f8f8;
+  --cbm-primary: #7170ff;
+  --cbm-primary-foreground: #07070c;
+  --cbm-secondary: #191a1b;
+  --cbm-secondary-foreground: #d0d6e0;
+  --cbm-muted: #191a1b;
+  --cbm-muted-foreground: #8a8f98;
+  --cbm-accent: #828fff;
+  --cbm-accent-foreground: #08090a;
+  --cbm-destructive: #f05b78;
+  --cbm-destructive-foreground: #130309;
+  --cbm-border: #292b31;
+  --cbm-input: #17181b;
+  --cbm-ring: #7170ff;
+  --cbm-sidebar: #0f1011;
+  --cbm-graph-background: #030305;
+  --cbm-graph-light: #7170ff;
+  --cbm-loader: #828fff;
+}
+
+:root[data-theme="superhuman"] {
+  --cbm-background: #121023;
+  --cbm-foreground: #fffdf9;
+  --cbm-card: #1b1938;
+  --cbm-card-foreground: #fffdf9;
+  --cbm-popover: #211d42;
+  --cbm-popover-foreground: #fffdf9;
+  --cbm-primary: #cbb7fb;
+  --cbm-primary-foreground: #1b1938;
+  --cbm-secondary: #211d42;
+  --cbm-secondary-foreground: #e9e5dd;
+  --cbm-muted: #211d42;
+  --cbm-muted-foreground: #aaa1c5;
+  --cbm-accent: #e9e5dd;
+  --cbm-accent-foreground: #292827;
+  --cbm-destructive: #ff7387;
+  --cbm-destructive-foreground: #1c070b;
+  --cbm-border: #403866;
+  --cbm-input: #1d1938;
+  --cbm-ring: #cbb7fb;
+  --cbm-sidebar: #17142d;
+  --cbm-graph-background: #080613;
+  --cbm-graph-light: #cbb7fb;
+  --cbm-loader: #cbb7fb;
+}
+
+:root[data-theme="ember"] {
+  --cbm-background: #100b0a;
+  --cbm-foreground: #fff4eb;
+  --cbm-card: #1b1210;
+  --cbm-card-foreground: #fff4eb;
+  --cbm-popover: #221613;
+  --cbm-popover-foreground: #fff4eb;
+  --cbm-primary: #ff8a3d;
+  --cbm-primary-foreground: #1a0802;
+  --cbm-secondary: #251714;
+  --cbm-secondary-foreground: #ffd0a6;
+  --cbm-muted: #251714;
+  --cbm-muted-foreground: #b89a8d;
+  --cbm-accent: #ff5d5d;
+  --cbm-accent-foreground: #1b0505;
+  --cbm-destructive: #ff3f5f;
+  --cbm-destructive-foreground: #1b0308;
+  --cbm-border: #4a2d25;
+  --cbm-input: #211411;
+  --cbm-ring: #ff8a3d;
+  --cbm-sidebar: #160e0c;
+  --cbm-graph-background: #080403;
+  --cbm-graph-light: #ff5d5d;
+  --cbm-loader: #ff8a3d;
 }
 
 html, body, #root {
@@ -32,23 +163,58 @@ html, body, #root {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
-  background: var(--color-background);
-  color: var(--color-foreground);
+  background: var(--cbm-background);
+  color: var(--cbm-foreground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Jynx gets her own moving atmosphere instead of a flat coat of paint. */
+:root[data-theme="jynx"] #root > div {
+  position: relative;
+  isolation: isolate;
+}
+
+:root[data-theme="jynx"] #root > div::before {
+  content: "";
+  position: absolute;
+  inset: -22%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 78% 12%, rgb(255 62 165 / 0.22), transparent 30%),
+    radial-gradient(circle at 18% 78%, rgb(180 76 255 / 0.16), transparent 33%),
+    conic-gradient(from 215deg at 62% 38%, transparent 0deg, rgb(0 229 255 / 0.09) 42deg, transparent 92deg);
+  filter: blur(42px) saturate(1.35);
+  opacity: 0.82;
+  transform-origin: 58% 42%;
+  animation: jynx-chaos-drift 15s cubic-bezier(0.45, 0, 0.55, 1) infinite alternate;
+}
+
+:root[data-theme="jynx"] header {
+  border-bottom-color: rgb(255 62 165 / 0.25);
+  box-shadow:
+    0 1px 0 rgb(0 229 255 / 0.08),
+    0 14px 48px rgb(180 76 255 / 0.08);
+}
+
+@keyframes jynx-chaos-drift {
+  0% { transform: translate3d(-2%, -1%, 0) rotate(-2deg) scale(1); }
+  55% { transform: translate3d(2%, 1%, 0) rotate(1deg) scale(1.04); }
+  100% { transform: translate3d(-1%, 3%, 0) rotate(3deg) scale(1.02); }
 }
 
 /* ── Graph loading constellation ─────────────────────────────── */
 
 .graph-loader-node {
-  fill: #22d3ee;
+  fill: var(--cbm-loader);
   animation: graph-loader-pulse 2.1s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center;
 }
 
 .graph-loader-edge {
-  stroke: #22d3ee;
+  stroke: var(--cbm-loader);
   stroke-opacity: 0.35;
   stroke-width: 1.2;
   stroke-dasharray: 90;
@@ -69,6 +235,10 @@ html, body, #root {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  :root[data-theme="jynx"] #root > div::before {
+    animation: none;
+  }
+
   .graph-loader-node,
   .graph-loader-edge {
     animation: none;
