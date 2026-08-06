@@ -145,7 +145,7 @@ Open `http://localhost:9749` in your browser. The UI is owned by the shared coor
 
 This fork adds a persistent theme selector to the UI header with five complete palettes:
 
-- **Jynx** — obsidian, molten gold, electric orchid, and hot pink (default)
+- **Jynx** — obsidian, hot pink, electric violet, and cyan (default)
 - **Aurora** — the original upstream emerald palette
 - **Linear Void** — precision black and restrained indigo
 - **Superhuman** — twilight purple, lavender, and warm cream
