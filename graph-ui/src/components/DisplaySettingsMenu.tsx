@@ -25,7 +25,7 @@ function SliderRow({ label, hint, value, min, max, onChange }: SliderRowProps) {
     <label className="block">
       <div className="flex items-center justify-between mb-1">
         <span className="text-[11px] text-foreground/70">{label}</span>
-        <span className="text-[10px] font-mono text-cyan-300/70 tabular-nums">
+        <span className="text-[10px] font-mono text-accent/75 tabular-nums">
           {value.toFixed(2)}×
         </span>
       </div>
@@ -91,14 +91,14 @@ export function DisplaySettingsMenu({
         aria-haspopup="dialog"
         title="Contrast & brightness"
       >
-        Display{!isDefault && <span className="ml-1 text-cyan-300">•</span>}
+        Display{!isDefault && <span className="ml-1 text-accent">•</span>}
       </Button>
 
       {open && (
         <div
           role="dialog"
           aria-label="Display settings"
-          className="absolute top-10 right-0 w-64 p-4 rounded-lg border border-border/60 bg-[#0b1920]/95 backdrop-blur-md shadow-xl z-20 space-y-3.5"
+          className="absolute top-10 right-0 w-64 p-4 rounded-lg border border-border/60 bg-popover/95 backdrop-blur-md shadow-xl z-20 space-y-3.5"
         >
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-medium text-foreground/50 uppercase tracking-widest">

@@ -20,7 +20,7 @@ export function NodeTooltip({ node }: NodeTooltipProps) {
       center
       style={{ pointerEvents: "none" }}
     >
-      <div className="bg-[#1a1a2e]/95 backdrop-blur border border-white/10 rounded-lg px-3 py-2 text-xs whitespace-nowrap shadow-xl max-w-[350px]">
+      <div className="bg-popover/95 backdrop-blur border border-border/70 rounded-lg px-3 py-2 text-xs whitespace-nowrap shadow-xl max-w-[350px]">
         <div className="flex items-center gap-1.5 mb-1">
           <span
             className="w-2 h-2 rounded-full shrink-0"

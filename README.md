@@ -141,6 +141,24 @@ codebase-memory-mcp --ui=true --port=9749
 
 Open `http://localhost:9749` in your browser. The UI is owned by the shared coordination daemon, so concurrent agent sessions do not start duplicate HTTP servers.
 
+#### Interface themes in the moogsG fork
+
+This fork adds a persistent theme selector to the UI header with five complete palettes:
+
+- **Jynx** — obsidian, molten gold, electric orchid, and hot pink (default)
+- **Aurora** — the original upstream emerald palette
+- **Linear Void** — precision black and restrained indigo
+- **Superhuman** — twilight purple, lavender, and warm cream
+- **Ember** — carbon black, volcanic orange, and hot coral
+
+Theme selection is applied before React renders to prevent a flash of the default palette and is saved locally in the browser. The theme tokens cover the application chrome, graph canvas background and lighting, loading animation, popovers, panels, and interactive accents. Semantic graph-node colors remain distinct across palettes.
+
+To produce a native binary with the themed UI embedded:
+
+```bash
+scripts/build.sh --with-ui
+```
+
 ### Auto-Index
 
 Enable automatic indexing on MCP session start:

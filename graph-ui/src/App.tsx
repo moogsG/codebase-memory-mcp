@@ -2,8 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
+import { ThemeSelector } from "./components/ThemeSelector";
 import type { TabId } from "./lib/types";
 import { useUiMessages } from "./lib/i18n";
+import {
+  DEFAULT_THEME_ID,
+  isThemeId,
+  setTheme as persistTheme,
+  type ThemeId,
+} from "./lib/themes";
 
 const TAB_IDS: TabId[] = ["graph", "stats", "control"];
 
@@ -33,7 +40,16 @@ function routeUrl(tab: TabId, project: string | null): string {
 export function App() {
   const t = useUiMessages();
   const [route, setRoute] = useState<RouteState>(readRoute);
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    const active = document.documentElement.dataset.theme;
+    return isThemeId(active) ? active : DEFAULT_THEME_ID;
+  });
   const { tab: activeTab, project: selectedProject } = route;
+
+  const changeTheme = useCallback((nextTheme: ThemeId) => {
+    persistTheme(nextTheme);
+    setTheme(nextTheme);
+  }, []);
 
   /* Normalize the URL on first load so it always carries the current route. */
   useEffect(() => {
@@ -66,7 +82,7 @@ export function App() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
       {/* Header */}
-      <header className="flex items-center justify-between px-5 h-12 border-b border-border bg-[#0b1920]/80 backdrop-blur-md shrink-0">
+      <header className="relative z-50 flex items-center justify-between px-5 h-12 border-b border-border bg-sidebar/80 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <div className="w-[7px] h-[7px] rounded-full bg-primary" />
@@ -100,22 +116,25 @@ export function App() {
           </nav>
         </div>
 
-        {selectedProject && (
-          <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/[0.04] border border-border/30">
-            <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
-              {t.graph.selectedLabel}
-            </span>
-            <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
-              {selectedProject}
-            </span>
-            <button
-              onClick={() => navigate("stats", null)}
-              className="text-foreground/20 hover:text-foreground/50 text-[12px] ml-1 transition-colors"
-            >
-              ×
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {selectedProject && (
+            <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-foreground/[0.04] border border-border/30">
+              <span className="text-[10px] text-foreground/30 uppercase tracking-wider">
+                {t.graph.selectedLabel}
+              </span>
+              <span className="text-[11px] text-primary font-mono truncate max-w-[300px]">
+                {selectedProject}
+              </span>
+              <button
+                onClick={() => navigate("stats", null)}
+                className="text-foreground/20 hover:text-foreground/50 text-[12px] ml-1 transition-colors"
+              >
+                ×
+              </button>
+            </div>
+          )}
+          <ThemeSelector value={theme} onChange={changeTheme} />
+        </div>
       </header>
 
       {/* Content */}
