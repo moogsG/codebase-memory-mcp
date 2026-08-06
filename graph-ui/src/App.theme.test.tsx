@@ -37,4 +37,14 @@ describe("App theme integration", () => {
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("ember");
     expect(screen.getByRole("button", { name: /theme: ember/i })).toBeInTheDocument();
   });
+
+  it("identifies the interface as Jynx Observatory", () => {
+    const { container } = render(<App />);
+
+    expect(screen.getByText("Jynx Observatory")).toBeInTheDocument();
+    expect(container.querySelector("header .jynx-brand-mark")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+  });
 });

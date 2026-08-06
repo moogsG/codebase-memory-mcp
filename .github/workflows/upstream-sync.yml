@@ -1,0 +1,86 @@
+# Weekly, review-only upstream synchronization for the Jynx fork.
+name: Upstream Sync
+
+on:
+  schedule:
+    - cron: "23 8 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  propose-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BRANCH: automation/upstream-sync
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch canonical upstream
+        run: |
+          git remote add upstream https://github.com/DeusData/codebase-memory-mcp.git
+          git fetch --no-tags upstream main
+          git fetch --no-tags origin \
+            "+refs/heads/$BRANCH:refs/remotes/origin/$BRANCH" || true
+
+      - name: Merge upstream into a review branch
+        id: merge
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH" origin/main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "main already contains upstream/main"
+            exit 0
+          fi
+
+          if ! git merge --no-ff --no-edit upstream/main; then
+            git merge --abort
+            echo "Upstream merge conflicts require a human resolution." >&2
+            exit 1
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "upstream_sha=$(git rev-parse upstream/main)" >> "$GITHUB_OUTPUT"
+
+      - name: Push review branch
+        if: steps.merge.outputs.changed == 'true'
+        run: git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+
+      - name: Open or refresh upstream sync PR
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_SHA: ${{ steps.merge.outputs.upstream_sha }}
+        shell: bash
+        run: |
+          BODY="$RUNNER_TEMP/upstream-sync-body.md"
+          printf '%s\n\n%s\n\n%s\n\n%s\n' \
+            "Automated merge of canonical \`DeusData/codebase-memory-mcp\` into the Jynx fork." \
+            "Upstream commit: \`$UPSTREAM_SHA\`" \
+            '**Never auto-merge this PR.** Inspect the diff and resolve conflicts intentionally.' \
+            "GitHub suppresses recursive PR workflows created by \`GITHUB_TOKEN\`; close and reopen this PR (or push a maintainer commit) to trigger branch-protection CI before merging." \
+            > "$BODY"
+
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open \
+            --base main --head "$BRANCH" --json number --jq '.[0].number // empty')
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" \
+              --title "chore: sync canonical upstream" --body-file "$BODY"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+              --title "chore: sync canonical upstream" --body-file "$BODY"
+          fi

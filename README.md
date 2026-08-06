@@ -141,9 +141,25 @@ codebase-memory-mcp --ui=true --port=9749
 
 Open `http://localhost:9749` in your browser. The UI is owned by the shared coordination daemon, so concurrent agent sessions do not start duplicate HTTP servers.
 
-#### Interface themes in the moogsG fork
+#### Jynx Observatory in the moogsG fork
 
-This fork adds a persistent theme selector to the UI header with five complete palettes:
+**Jynx Observatory** is the fork's local-first UI identity: **Code, change, and memory—mapped.** It preserves the `codebase-memory-mcp` executable and MCP server identity for compatibility while giving the embedded Graph UI its own release channel, orbital-J mark, loading identity, and persistent theme selector.
+
+The Jynx Edition release currently targets **Apple Silicon macOS**. Install or upgrade the latest checksum-verified UI build with:
+
+```bash
+curl -fsSL https://github.com/moogsG/codebase-memory-mcp/releases/latest/download/jynx-install.sh | bash
+```
+
+The installer validates the release archive and a persisted copy of itself against `checksums.txt`, verifies the candidate version before activation, and preserves the previous executable. Roll back one release with:
+
+```bash
+~/.local/bin/jynx-install.sh --rollback
+```
+
+Custom install directories are supported with `--dir PATH`. Jynx GitHub releases are manually dispatched **from `main` only**, include build-provenance attestations and ad-hoc macOS signing, but are **not notarized** with an Apple Developer ID yet. Keep the unauthenticated UI bound to loopback (`127.0.0.1`). If an interrupted process leaves `.jynx-install.lock`, first confirm that no Jynx installer or rollback is running, then remove that lock directory and retry.
+
+The interface includes five complete palettes:
 
 - **Jynx** — obsidian, hot pink, electric violet, and cyan (default)
 - **Aurora** — the original upstream emerald palette
