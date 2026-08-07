@@ -60,4 +60,15 @@ describe("GraphTab filters", () => {
     expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "None" })).toBeInTheDocument();
   });
+
+  it("hides graph sidebars and control chrome in Focus Mode", async () => {
+    mockLayoutFetch(SAMPLE);
+
+    render(<GraphTab project="demo" focusMode />);
+
+    expect(await screen.findByText(/2 nodes/)).toBeInTheDocument();
+    expect(screen.queryByText("Filters")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Node budget: how many nodes to load")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+  });
 });
