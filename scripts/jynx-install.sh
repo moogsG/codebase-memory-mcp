@@ -7,6 +7,7 @@ INSTALL_DIR="$HOME/.local/bin"
 ROLLBACK=false
 BASE_URL="${CBM_JYNX_DOWNLOAD_URL:-https://github.com/${REPO}/releases/latest/download}"
 ARCHIVE="codebase-memory-mcp-ui-darwin-arm64.tar.gz"
+ROLLBACK_EXPECTED_SHA256=""
 
 usage() {
   cat <<'EOF'
@@ -82,21 +83,53 @@ sha256_file() {
   fi
 }
 
+single_link_regular_file() {
+  local path="$1" links
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  links=$(stat -f '%l' "$path" 2>/dev/null || stat -c '%h' "$path" 2>/dev/null) || return 1
+  [ "$links" = 1 ]
+}
+
 activate() {
-  local candidate="$1" expected_version installed_version
+  local installer="$1" candidate="$2" expected_sha256="${3:-}" expected_version installed_version
+  local -a install_args=(install -y --force "--dir=$INSTALL_DIR" --skip-config --skip-path)
   expected_version=$("$candidate" --version 2>/dev/null) || return 1
-  "$candidate" install -y --force "--dir=$INSTALL_DIR" --skip-config || return 1
-  [ -f "$DEST" ] && [ ! -L "$DEST" ] && [ -x "$DEST" ] || return 1
+  if [ "$installer" != "$candidate" ]; then
+    [ -n "$expected_sha256" ] || return 1
+    install_args+=("--candidate=$candidate" "--candidate-sha256=$expected_sha256")
+  fi
+  "$installer" "${install_args[@]}" || return 1
+  single_link_regular_file "$DEST" && [ -x "$DEST" ] || return 1
+  if [ -n "$expected_sha256" ]; then
+    [ "$(sha256_file "$DEST")" = "$expected_sha256" ] || return 1
+  fi
   installed_version=$("$DEST" --version 2>/dev/null) || return 1
   [ "$installed_version" = "$expected_version" ]
 }
 
 restore_backup() {
+  local activator="${1:-}" backup_version current_version expected_sha256
   rollback_pair_is_valid || {
     echo "jynx-install: no verified rollback executable found at $BACKUP" >&2
     return 1
   }
-  activate "$BACKUP" || {
+  expected_sha256="$ROLLBACK_EXPECTED_SHA256"
+  backup_version=$("$BACKUP" --version 2>/dev/null) || return 1
+  current_version=$("$DEST" --version 2>/dev/null || true)
+  if single_link_regular_file "$DEST" && [ -x "$DEST" ] &&
+     [ "$current_version" = "$backup_version" ] &&
+     [ "$(sha256_file "$DEST" 2>/dev/null || true)" = "$(sha256_file "$BACKUP")" ]; then
+    echo "Restored: $current_version"
+    return 0
+  fi
+  if [ -z "$activator" ]; then
+    single_link_regular_file "$DEST" && [ -x "$DEST" ] || {
+      echo "jynx-install: current executable cannot coordinate rollback" >&2
+      return 1
+    }
+    activator="$DEST"
+  fi
+  activate "$activator" "$BACKUP" "$expected_sha256" || {
     echo "jynx-install: rollback activation failed" >&2
     return 1
   }
@@ -104,15 +137,17 @@ restore_backup() {
 }
 
 rollback_pair_is_valid() {
-  [ -f "$BACKUP" ] && [ ! -L "$BACKUP" ] &&
-    [ -f "$BACKUP_SUM" ] && [ ! -L "$BACKUP_SUM" ] || return 1
+  single_link_regular_file "$BACKUP" &&
+    single_link_regular_file "$BACKUP_SUM" || return 1
   local expected actual
   expected=$(awk 'NR == 1 { print $1 }' "$BACKUP_SUM")
   case "$expected" in ''|*[!0-9A-Fa-f]*) return 1 ;; esac
   [ "${#expected}" -eq 64 ] || return 1
   actual=$(sha256_file "$BACKUP")
-  [ "$(printf '%s' "$expected" | tr 'A-F' 'a-f')" = "$(printf '%s' "$actual" | tr 'A-F' 'a-f')" ] || return 1
-  "$BACKUP" --version >/dev/null 2>&1
+  expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
+  [ "$expected" = "$(printf '%s' "$actual" | tr 'A-F' 'a-f')" ] || return 1
+  "$BACKUP" --version >/dev/null 2>&1 || return 1
+  ROLLBACK_EXPECTED_SHA256="$expected"
 }
 
 remove_regular_file() {
@@ -128,7 +163,7 @@ remove_regular_file() {
 
 recover_failed_activation() {
   if $HAD_DEST; then
-    restore_backup || {
+    restore_backup "$CANDIDATE" || {
       echo "jynx-install: CRITICAL: automatic rollback failed; destination requires manual recovery" >&2
       return 1
     }
@@ -296,7 +331,7 @@ else
   remove_regular_file "$BACKUP_SUM"
 fi
 
-if ! activate "$CANDIDATE"; then
+if ! activate "$CANDIDATE" "$CANDIDATE"; then
   rm -f "$INSTALLER_TMP"
   echo "jynx-install: activation health check failed; attempting rollback" >&2
   recover_failed_activation

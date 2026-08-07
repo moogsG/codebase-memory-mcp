@@ -1012,21 +1012,44 @@ int cbm_copy_file(const char *src, const char *dst) {
  * copying the running binary onto itself during install (cbm_copy_file would
  * truncate it, since it opens the destination "wb" before reading the source). */
 static bool cbm_same_file(const char *a, const char *b) {
+#ifdef _WIN32
+    wchar_t *wide_a = cbm_utf8_to_wide(a);
+    wchar_t *wide_b = cbm_utf8_to_wide(b);
+    if (!wide_a || !wide_b) {
+        free(wide_a);
+        free(wide_b);
+        return false;
+    }
+    DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    HANDLE handle_a = CreateFileW(wide_a, FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING,
+                                  FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    HANDLE handle_b = CreateFileW(wide_b, FILE_READ_ATTRIBUTES, share, NULL, OPEN_EXISTING,
+                                  FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    free(wide_a);
+    free(wide_b);
+    BY_HANDLE_FILE_INFORMATION info_a;
+    BY_HANDLE_FILE_INFORMATION info_b;
+    bool same = handle_a != INVALID_HANDLE_VALUE && handle_b != INVALID_HANDLE_VALUE &&
+                GetFileType(handle_a) == FILE_TYPE_DISK &&
+                GetFileType(handle_b) == FILE_TYPE_DISK &&
+                GetFileInformationByHandle(handle_a, &info_a) != 0 &&
+                GetFileInformationByHandle(handle_b, &info_b) != 0 &&
+                info_a.dwVolumeSerialNumber == info_b.dwVolumeSerialNumber &&
+                info_a.nFileIndexHigh == info_b.nFileIndexHigh &&
+                info_a.nFileIndexLow == info_b.nFileIndexLow;
+    if (handle_a != INVALID_HANDLE_VALUE) {
+        (void)CloseHandle(handle_a);
+    }
+    if (handle_b != INVALID_HANDLE_VALUE) {
+        (void)CloseHandle(handle_b);
+    }
+    return same;
+#else
     struct stat sa;
     struct stat sb;
     if (stat(a, &sa) != 0 || stat(b, &sb) != 0) {
         return false;
     }
-#ifdef _WIN32
-    /* st_ino is unreliable on Windows; compare normalized path strings. */
-    char na[CLI_BUF_1K];
-    char nb[CLI_BUF_1K];
-    snprintf(na, sizeof(na), "%s", a);
-    snprintf(nb, sizeof(nb), "%s", b);
-    cbm_normalize_path_sep(na);
-    cbm_normalize_path_sep(nb);
-    return strcmp(na, nb) == 0;
-#else
     return sa.st_dev == sb.st_dev && sa.st_ino == sb.st_ino;
 #endif
 }
@@ -9170,6 +9193,7 @@ typedef struct {
     bool copy_binary;
     bool delete_indexes;
     bool skip_config;
+    bool skip_path;
     bool force;
     bool dry_run;
 } cli_install_activation_t;
@@ -9242,24 +9266,27 @@ static int cli_install_activate(void *opaque) {
         return CLI_ACTIVATION_PARTIAL;
     }
     int path_rc = CLI_TRUE;
+    if (!activation->skip_path) {
 #ifdef _WIN32
-    path_rc = cli_ensure_windows_user_path(activation->bin_dir,
-                                           activation->dry_run || g_cli_activation_test_ops_set);
-    if (path_rc == CLI_OK) {
-        printf("\nAdded %s to the current-user PATH\n", activation->bin_dir);
-    } else if (path_rc == CLI_TRUE) {
-        printf("\nPATH already includes %s\n", activation->bin_dir);
-    }
-#else
-    if (activation->shell_rc[0]) {
-        path_rc = cbm_ensure_path(activation->bin_dir, activation->shell_rc, activation->dry_run);
-        if (path_rc == 0) {
-            printf("\nAdded %s to PATH in %s\n", activation->bin_dir, activation->shell_rc);
+        path_rc = cli_ensure_windows_user_path(
+            activation->bin_dir, activation->dry_run || g_cli_activation_test_ops_set);
+        if (path_rc == CLI_OK) {
+            printf("\nAdded %s to the current-user PATH\n", activation->bin_dir);
         } else if (path_rc == CLI_TRUE) {
             printf("\nPATH already includes %s\n", activation->bin_dir);
         }
-    }
+#else
+        if (activation->shell_rc[0]) {
+            path_rc =
+                cbm_ensure_path(activation->bin_dir, activation->shell_rc, activation->dry_run);
+            if (path_rc == 0) {
+                printf("\nAdded %s to PATH in %s\n", activation->bin_dir, activation->shell_rc);
+            } else if (path_rc == CLI_TRUE) {
+                printf("\nPATH already includes %s\n", activation->bin_dir);
+            }
+        }
 #endif
+    }
     if (path_rc == CLI_ERR) {
         cli_activation_transaction_finalize_committed_or_fail_stop(
             &activation->binary_transaction, "install_transaction_path_failure_finalize");
@@ -9291,7 +9318,10 @@ int cbm_cmd_install(int argc, char **argv) {
     bool plan = false;
     bool reset_indexes = false;
     bool skip_config = false;
+    bool skip_path = false;
     const char *requested_bin_dir = NULL;
+    const char *requested_candidate = NULL;
+    const char *requested_candidate_sha256 = NULL;
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--dry-run") == 0) {
             dry_run = true;
@@ -9303,6 +9333,36 @@ int cbm_cmd_install(int argc, char **argv) {
             reset_indexes = true;
         } else if (strcmp(argv[i], "--skip-config") == 0) {
             skip_config = true;
+        } else if (strcmp(argv[i], "--skip-path") == 0) {
+            skip_path = true;
+        } else if (strncmp(argv[i], "--candidate=", SLEN("--candidate=")) == 0) {
+            requested_candidate = argv[i] + SLEN("--candidate=");
+            if (!requested_candidate[0]) {
+                (void)fprintf(stderr, "error: --candidate requires a non-empty path\n");
+                return CLI_TRUE;
+            }
+        } else if (strcmp(argv[i], "--candidate") == 0) {
+            if (i + 1 >= argc || !argv[i + 1] || !argv[i + 1][0] || argv[i + 1][0] == '-') {
+                (void)fprintf(stderr, "error: --candidate requires a non-empty path\n");
+                return CLI_TRUE;
+            }
+            requested_candidate = argv[++i];
+        } else if (strncmp(argv[i], "--candidate-sha256=", SLEN("--candidate-sha256=")) == 0) {
+            requested_candidate_sha256 = argv[i] + SLEN("--candidate-sha256=");
+            if (strlen(requested_candidate_sha256) != CBM_SHA256_HEX_LEN) {
+                (void)fprintf(
+                    stderr,
+                    "error: --candidate-sha256 requires exactly 64 hexadecimal characters\n");
+                return CLI_TRUE;
+            }
+            for (size_t j = 0; j < CBM_SHA256_HEX_LEN; j++) {
+                if (!isxdigit((unsigned char)requested_candidate_sha256[j])) {
+                    (void)fprintf(
+                        stderr,
+                        "error: --candidate-sha256 requires exactly 64 hexadecimal characters\n");
+                    return CLI_TRUE;
+                }
+            }
         } else if (strncmp(argv[i], "--dir=", SLEN("--dir=")) == 0) {
             requested_bin_dir = argv[i] + SLEN("--dir=");
             if (!requested_bin_dir[0]) {
@@ -9320,6 +9380,10 @@ int cbm_cmd_install(int argc, char **argv) {
             (void)fprintf(stderr, "error: unknown install option: %s\n", argv[i]);
             return CLI_TRUE;
         }
+    }
+    if (requested_candidate_sha256 && !requested_candidate) {
+        (void)fprintf(stderr, "error: --candidate-sha256 requires --candidate\n");
+        return CLI_TRUE;
     }
 
     const char *home = cbm_get_home_dir();
@@ -9367,10 +9431,20 @@ int cbm_cmd_install(int argc, char **argv) {
 
     char self_path[CLI_BUF_1K] = {0};
     (void)cbm_detect_self_path(self_path, sizeof(self_path), home);
+    const char *install_source = requested_candidate ? requested_candidate : self_path;
+    if (!install_source[0]) {
+        (void)fprintf(stderr, "error: install candidate path could not be resolved\n");
+        return CLI_TRUE;
+    }
 
     struct stat target_status;
     bool target_exists = (stat(bin_target, &target_status) == 0);
-    bool same_binary = cbm_same_file(self_path, bin_target);
+    bool same_binary = cbm_same_file(install_source, bin_target);
+    if (requested_candidate && same_binary) {
+        (void)fprintf(stderr, "error: explicit install candidate must not be the destination or a "
+                              "hardlink alias\n");
+        return CLI_TRUE;
+    }
     bool do_copy = !same_binary && (!target_exists || force);
 
     /* (#607) Default: preserve existing indexes. `--reset-indexes` opts into
@@ -9399,23 +9473,25 @@ int cbm_cmd_install(int argc, char **argv) {
     /* A freshly clang-built arm64 binary is linker-signed (flags=0x20002)
      * and gets Killed:9 when spawned by an MCP host. Sign the private staged
      * candidate before disrupting sessions, then publish those exact verified
-     * bytes inside the activation window. */
-    bool sign_binary = do_copy || target_exists;
-    bool prepare_binary = sign_binary;
+     * bytes inside the activation window. Explicit candidates are already
+     * verified release/rollback bytes; re-signing would change their checksum. */
+    bool sign_binary = !requested_candidate && (do_copy || target_exists);
+    bool prepare_binary = do_copy || sign_binary || (dry_run && requested_candidate);
 #else
-    bool prepare_binary = do_copy;
+    bool prepare_binary = do_copy || (dry_run && requested_candidate);
 #endif
     cbm_activation_transaction_t *binary_transaction = NULL;
     cli_binary_validator_t binary_validator = {{0}};
     bool has_binary_validator = false;
     char prepared_dir[CLI_BUF_1K] = {0};
     char prepared_candidate[CLI_BUF_1K] = {0};
-    if (!dry_run && prepare_binary) {
+    if (prepare_binary && (!dry_run || requested_candidate)) {
 #ifdef __APPLE__
-        const char *candidate = do_copy ? self_path : bin_target;
+        const char *candidate =
+            requested_candidate ? install_source : (do_copy ? install_source : bin_target);
 #else
-        /* Non-macOS activation reaches this block only for a real copy. */
-        const char *candidate = self_path;
+        /* Non-macOS reaches this block for a real copy or explicit-candidate dry-run. */
+        const char *candidate = install_source;
 #endif
         bool target_parent_exists = cbm_is_dir(bin_dir);
         bool prepare_out_of_line = !target_parent_exists;
@@ -9464,6 +9540,16 @@ int cbm_cmd_install(int argc, char **argv) {
             }
             return CLI_TRUE;
         }
+        if (requested_candidate_sha256 &&
+            strcasecmp(staged_validator.fingerprint, requested_candidate_sha256) != 0) {
+            (void)fprintf(stderr,
+                          "error: staged install candidate does not match --candidate-sha256\n");
+            (void)cli_activation_transaction_abort(&binary_transaction);
+            if (prepared_dir[0]) {
+                (void)cbm_rmdir(prepared_dir);
+            }
+            return CLI_TRUE;
+        }
         if (prepare_out_of_line) {
             if (cli_activation_transaction_commit_validated(binary_transaction, &staged_validator,
                                                             CLI_OCTAL_PERM) != CLI_OK ||
@@ -9475,6 +9561,19 @@ int cbm_cmd_install(int argc, char **argv) {
                                       "failed\n");
                 return CLI_TRUE;
             }
+#ifdef CBM_CLI_ENABLE_TEST_API
+            /* Deterministic race seam: simulate same-user mutation after private
+             * publication but before the authoritative restaging check. */
+            const char *prepared_replacement =
+                getenv("CBM_CLI_TEST_PREPARED_CANDIDATE_REPLACEMENT");
+            if (prepared_replacement && prepared_replacement[0] &&
+                cbm_copy_file(prepared_replacement, prepared_candidate) != CLI_OK) {
+                (void)cbm_unlink(prepared_candidate);
+                (void)cbm_rmdir(prepared_dir);
+                (void)fprintf(stderr, "error: test candidate replacement failed\n");
+                return CLI_TRUE;
+            }
+#endif
 #ifdef __APPLE__
             if (sign_binary && cbm_macos_adhoc_sign(prepared_candidate) != 0) {
                 (void)fprintf(stderr, "error: ad-hoc signing the private macOS candidate failed\n");
@@ -9483,8 +9582,9 @@ int cbm_cmd_install(int argc, char **argv) {
                 return CLI_TRUE;
             }
 #endif
-            has_binary_validator =
-                cbm_daemon_build_fingerprint_file(prepared_candidate, binary_validator.fingerprint);
+            cli_binary_validator_t prepared_validator = {{0}};
+            has_binary_validator = cbm_daemon_build_fingerprint_file(
+                prepared_candidate, prepared_validator.fingerprint);
             if (has_binary_validator && !g_cli_activation_test_ops_set) {
                 const char *candidate_argv[] = {prepared_candidate, "--version", NULL};
                 has_binary_validator = cbm_exec_no_shell(candidate_argv) == CLI_OK;
@@ -9496,6 +9596,24 @@ int cbm_cmd_install(int argc, char **argv) {
                 (void)cbm_rmdir(prepared_dir);
                 return CLI_TRUE;
             }
+            bool staged_identity_changed =
+                strcmp(prepared_validator.fingerprint, staged_validator.fingerprint) != 0;
+#ifdef __APPLE__
+            if (!sign_binary && staged_identity_changed) {
+#else
+            if (staged_identity_changed) {
+#endif
+                (void)fprintf(stderr, "error: private install candidate identity changed before "
+                                      "restaging\n");
+                (void)cbm_unlink(prepared_candidate);
+                (void)cbm_rmdir(prepared_dir);
+                return CLI_TRUE;
+            }
+#ifdef __APPLE__
+            binary_validator = sign_binary ? prepared_validator : staged_validator;
+#else
+            binary_validator = staged_validator;
+#endif
             if (target_parent_exists) {
                 stage_status = cbm_activation_transaction_stage_file(bin_target, prepared_candidate,
                                                                      &binary_transaction);
@@ -9530,6 +9648,20 @@ int cbm_cmd_install(int argc, char **argv) {
             }
             return CLI_TRUE;
         }
+        if (dry_run) {
+            /* Validate explicit candidates through the production transaction,
+             * then discard all staged state before plan-only activation. */
+            cli_activation_transaction_abort_or_fail_stop(&binary_transaction,
+                                                          "install_dry_run_candidate_cleanup");
+            if (prepared_candidate[0]) {
+                (void)cbm_unlink(prepared_candidate);
+                prepared_candidate[0] = '\0';
+            }
+            if (prepared_dir[0]) {
+                (void)cbm_rmdir(prepared_dir);
+                prepared_dir[0] = '\0';
+            }
+        }
     }
     char shell_rc[CLI_BUF_1K] = {0};
 #ifndef _WIN32
@@ -9547,12 +9679,14 @@ int cbm_cmd_install(int argc, char **argv) {
         .copy_binary = do_copy,
         .delete_indexes = delete_indexes,
         .skip_config = skip_config,
+        .skip_path = skip_path,
         .force = force,
         .dry_run = dry_run,
     };
     int activation_rc =
         dry_run ? cli_install_activate(&activation)
-                : cli_activation_guard(CBM_DAEMON_RUNTIME_ACTIVATION_INSTALL, CBM_VERSION,
+                : cli_activation_guard(CBM_DAEMON_RUNTIME_ACTIVATION_INSTALL,
+                                       requested_candidate ? NULL : CBM_VERSION,
                                        has_binary_validator ? binary_validator.fingerprint : NULL,
                                        cli_install_activate, &activation);
     if (activation.binary_transaction) {
@@ -9586,7 +9720,9 @@ int cbm_cmd_install(int argc, char **argv) {
     printf("\nInstall complete. Please restart your coding-agent sessions to "
            "properly take this into account.\n");
 #ifndef _WIN32
-    printf("Restart your shell or run:\n  source %s\n", shell_rc);
+    if (!skip_path) {
+        printf("Restart your shell or run:\n  source %s\n", shell_rc);
+    }
 #endif
     if (dry_run) {
         printf("\n(dry-run — no files were modified)\n");

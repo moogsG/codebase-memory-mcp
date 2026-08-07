@@ -15,7 +15,9 @@ trap cleanup EXIT
 FIXTURE="$WORK/release"
 PAYLOAD="$WORK/payload"
 TARGET="$WORK/bin"
-mkdir -p "$FIXTURE" "$PAYLOAD" "$TARGET"
+TEST_HOME="$WORK/home"
+mkdir -p "$FIXTURE" "$PAYLOAD" "$TARGET" "$TEST_HOME"
+export HOME="$TEST_HOME"
 
 make_fake_binary() {
   local path="$1" version="$2"
@@ -29,12 +31,30 @@ fi
 if [ "\${1:-}" = "install" ]; then
   shift
   install_dir=""
+  install_source="\$0"
+  expected_sha256=""
   for arg in "\$@"; do
-    case "\$arg" in --dir=*) install_dir="\${arg#--dir=}" ;; esac
+    case "\$arg" in
+      --dir=*) install_dir="\${arg#--dir=}" ;;
+      --candidate=*) install_source="\${arg#--candidate=}" ;;
+      --candidate-sha256=*) expected_sha256="\${arg#--candidate-sha256=}" ;;
+    esac
   done
   [ -n "\$install_dir" ]
+  if [ -n "\${JYNX_TEST_SWAP_CANDIDATE_WITH:-}" ] && [ "\$install_source" != "\$0" ]; then
+    cp "\$JYNX_TEST_SWAP_CANDIDATE_WITH" "\$install_source"
+    chmod 755 "\$install_source"
+  fi
+  if [ -n "\$expected_sha256" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      actual_sha256=\$(sha256sum "\$install_source" | awk '{print \$1}')
+    else
+      actual_sha256=\$(shasum -a 256 "\$install_source" | awk '{print \$1}')
+    fi
+    [ "\$actual_sha256" = "\$expected_sha256" ]
+  fi
   mkdir -p "\$install_dir"
-  cp "\$0" "\$install_dir/codebase-memory-mcp"
+  cp "\$install_source" "\$install_dir/codebase-memory-mcp"
   chmod 755 "\$install_dir/codebase-memory-mcp"
   exit 0
 fi
@@ -60,8 +80,29 @@ EOF
   chmod 755 "$path"
 }
 
-make_fake_binary "$TARGET/codebase-memory-mcp" "0.9.0-upstream"
-make_fake_binary "$PAYLOAD/codebase-memory-mcp" "0.9.0-jynx.2"
+make_legacy_binary() {
+  local path="$1" version="$2"
+  cat > "$path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then
+  echo "codebase-memory-mcp $version"
+  exit 0
+fi
+if [ "\${1:-}" = "install" ]; then
+  install_dir="\$HOME/.local/bin"
+  mkdir -p "\$install_dir"
+  cp "\$0" "\$install_dir/codebase-memory-mcp"
+  chmod 755 "\$install_dir/codebase-memory-mcp"
+  exit 0
+fi
+echo '{}'
+EOF
+  chmod 755 "$path"
+}
+
+make_legacy_binary "$TARGET/codebase-memory-mcp" "0.9.0-upstream"
+make_fake_binary "$PAYLOAD/codebase-memory-mcp" "0.9.0-jynx.3"
 printf 'test license\n' > "$PAYLOAD/LICENSE"
 printf '#!/usr/bin/env bash\n' > "$PAYLOAD/install.sh"
 printf 'test notices\n' > "$PAYLOAD/THIRD_PARTY_NOTICES.md"
@@ -158,7 +199,7 @@ grep -q 'refusing to replace a non-regular updater' "$WORK/nonregular-updater.lo
 CBM_JYNX_DOWNLOAD_URL="$BASE_URL" \
   bash "$ROOT/scripts/jynx-install.sh" --dir "$TARGET"
 
-[ "$("$TARGET/codebase-memory-mcp" --version)" = "codebase-memory-mcp 0.9.0-jynx.2" ]
+[ "$("$TARGET/codebase-memory-mcp" --version)" = "codebase-memory-mcp 0.9.0-jynx.3" ]
 [ "$("$TARGET/codebase-memory-mcp.jynx-rollback" --version)" = "codebase-memory-mcp 0.9.0-upstream" ]
 [ -s "$TARGET/codebase-memory-mcp.jynx-rollback.sha256" ]
 [ -x "$TARGET/jynx-install.sh" ]
@@ -174,6 +215,85 @@ CBM_JYNX_DOWNLOAD_URL="$BASE_URL" \
 bash "$TARGET/jynx-install.sh" --rollback --dir "$TARGET"
 [ "$("$TARGET/codebase-memory-mcp" --version)" = "codebase-memory-mcp 0.9.0-upstream" ]
 
+# Matching version text is not proof of a completed rollback: differing bytes
+# must still be replaced by the checksum-pinned rollback generation.
+make_fake_binary "$TARGET/codebase-memory-mcp" "0.9.0-upstream"
+if cmp -s "$TARGET/codebase-memory-mcp" "$TARGET/codebase-memory-mcp.jynx-rollback"; then
+  echo "same-version rollback fixture unexpectedly matched pinned backup bytes" >&2
+  exit 1
+fi
+bash "$TARGET/jynx-install.sh" --rollback --dir "$TARGET"
+cmp "$TARGET/codebase-memory-mcp" "$TARGET/codebase-memory-mcp.jynx-rollback"
+
+# A destination symlink must never be accepted as an idempotently restored
+# executable, even when it resolves to the checksum-valid rollback generation.
+SYMLINK_ROLLBACK_TARGET="$WORK/symlink-rollback-bin"
+mkdir -p "$SYMLINK_ROLLBACK_TARGET"
+cp "$TARGET/codebase-memory-mcp.jynx-rollback" \
+  "$SYMLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback"
+cp "$TARGET/codebase-memory-mcp.jynx-rollback.sha256" \
+  "$SYMLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback.sha256"
+ln -s codebase-memory-mcp.jynx-rollback \
+  "$SYMLINK_ROLLBACK_TARGET/codebase-memory-mcp"
+if bash "$TARGET/jynx-install.sh" --rollback --dir "$SYMLINK_ROLLBACK_TARGET" \
+    >"$WORK/symlink-rollback.log" 2>&1; then
+  echo "rollback accepted a symlink destination" >&2
+  exit 1
+fi
+[ -L "$SYMLINK_ROLLBACK_TARGET/codebase-memory-mcp" ]
+grep -q "current executable cannot coordinate rollback" "$WORK/symlink-rollback.log"
+
+# The manifest digest must stay bound to the bytes staged by the native
+# activator. A deterministic swap after shell validation must fail closed.
+RACE_ROLLBACK_TARGET="$WORK/race-rollback-bin"
+mkdir -p "$RACE_ROLLBACK_TARGET"
+make_fake_binary "$RACE_ROLLBACK_TARGET/codebase-memory-mcp" "0.9.0-jynx.3"
+cp "$TARGET/codebase-memory-mcp.jynx-rollback" \
+  "$RACE_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback"
+shasum -a 256 "$RACE_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback" \
+  > "$RACE_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback.sha256"
+make_fake_binary "$WORK/swapped-rollback-candidate" "0.9.0-upstream"
+if JYNX_TEST_SWAP_CANDIDATE_WITH="$WORK/swapped-rollback-candidate" \
+    bash "$TARGET/jynx-install.sh" --rollback --dir "$RACE_ROLLBACK_TARGET" \
+      >"$WORK/race-rollback.log" 2>&1; then
+  echo "rollback accepted bytes swapped after manifest validation" >&2
+  exit 1
+fi
+[ "$("$RACE_ROLLBACK_TARGET/codebase-memory-mcp" --version)" = \
+  "codebase-memory-mcp 0.9.0-jynx.3" ]
+grep -q "rollback activation failed" "$WORK/race-rollback.log"
+
+# Rollback state and an idempotently restored destination must each be a
+# single-link regular file; hardlinks cannot bypass the native transaction.
+for hardlink_case in backup manifest destination; do
+  HARDLINK_ROLLBACK_TARGET="$WORK/hardlink-$hardlink_case-bin"
+  mkdir -p "$HARDLINK_ROLLBACK_TARGET"
+  cp "$TARGET/codebase-memory-mcp.jynx-rollback" \
+    "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback"
+  shasum -a 256 "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback" \
+    > "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback.sha256"
+  if [ "$hardlink_case" = destination ]; then
+    cp "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback" \
+      "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp"
+    ln "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp" \
+      "$HARDLINK_ROLLBACK_TARGET/destination-peer"
+  else
+    make_fake_binary "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp" "0.9.0-jynx.3"
+    if [ "$hardlink_case" = backup ]; then
+      ln "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback" \
+        "$HARDLINK_ROLLBACK_TARGET/backup-peer"
+    else
+      ln "$HARDLINK_ROLLBACK_TARGET/codebase-memory-mcp.jynx-rollback.sha256" \
+        "$HARDLINK_ROLLBACK_TARGET/manifest-peer"
+    fi
+  fi
+  if bash "$TARGET/jynx-install.sh" --rollback --dir "$HARDLINK_ROLLBACK_TARGET" \
+      >"$WORK/hardlink-$hardlink_case.log" 2>&1; then
+    echo "rollback accepted hardlinked $hardlink_case" >&2
+    exit 1
+  fi
+done
+
 # A destination-free install must not inherit an unrelated stale rollback pair.
 FRESH_TARGET="$WORK/fresh-bin"
 mkdir -p "$FRESH_TARGET"
@@ -182,7 +302,7 @@ shasum -a 256 "$FRESH_TARGET/codebase-memory-mcp.jynx-rollback" \
   > "$FRESH_TARGET/codebase-memory-mcp.jynx-rollback.sha256"
 CBM_JYNX_DOWNLOAD_URL="$BASE_URL" \
   bash "$ROOT/scripts/jynx-install.sh" --dir "$FRESH_TARGET"
-[ "$("$FRESH_TARGET/codebase-memory-mcp" --version)" = "codebase-memory-mcp 0.9.0-jynx.2" ]
+[ "$("$FRESH_TARGET/codebase-memory-mcp" --version)" = "codebase-memory-mcp 0.9.0-jynx.3" ]
 [ ! -e "$FRESH_TARGET/codebase-memory-mcp.jynx-rollback" ]
 [ ! -e "$FRESH_TARGET/codebase-memory-mcp.jynx-rollback.sha256" ]
 if bash "$FRESH_TARGET/jynx-install.sh" --rollback --dir "$FRESH_TARGET" >/dev/null 2>&1; then

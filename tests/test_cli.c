@@ -19,12 +19,14 @@
 #include <cli/progress_sink.h>
 #include <daemon/bootstrap.h>
 #include <daemon/runtime.h>
+#include <daemon/service.h>
 #include <daemon/version_cohort.h>
 #include <foundation/constants.h>
 #include <foundation/platform.h>
 #include <mcp/mcp.h>
 #include <foundation/yaml.h>
 #include <store/store.h>
+#include <ui/http_server.h>
 #include <yyjson/yyjson.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -33,6 +35,9 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <foundation/win_utf8.h>
+#endif
 #ifndef _WIN32
 #include <sys/wait.h>
 #endif
@@ -185,6 +190,39 @@ static const char *read_test_file(const char *path) {
     fclose(f);
     buf[n] = '\0';
     return buf;
+}
+
+static bool test_binary_file_contains(const char *path, const char *needle) {
+    FILE *file = cbm_fopen(path, "rb");
+    size_t needle_length = needle ? strlen(needle) : 0;
+    if (!file || needle_length == 0 || needle_length > SIZE_MAX - (64U * 1024U)) {
+        if (file) {
+            fclose(file);
+        }
+        return false;
+    }
+    size_t capacity = (64U * 1024U) + needle_length;
+    unsigned char *bytes = malloc(capacity);
+    size_t carry = 0;
+    bool found = false;
+    while (bytes) {
+        size_t amount = fread(bytes + carry, 1, capacity - carry, file);
+        size_t total = carry + amount;
+        for (size_t i = 0; i + needle_length <= total; i++) {
+            if (memcmp(bytes + i, needle, needle_length) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (found || amount == 0) {
+            break;
+        }
+        carry = total < needle_length - 1 ? total : needle_length - 1;
+        memmove(bytes, bytes + total - carry, carry);
+    }
+    free(bytes);
+    fclose(file);
+    return found;
 }
 
 static char *read_test_file_alloc(const char *path) {
@@ -1061,6 +1099,305 @@ TEST(cli_install_dir_and_skip_config_stage_first_install_safely) {
     PASS();
 }
 
+TEST(cli_install_candidate_and_skip_path_restore_verified_binary_in_place) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-install-candidate-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir)) {
+        FAIL("cbm_mkdtemp failed");
+    }
+    char *old_home = NULL;
+    char *old_cache = NULL;
+    cli_activation_save_env(&old_home, &old_cache);
+    const char *shell = getenv("SHELL");
+    char *old_shell = shell ? strdup(shell) : NULL;
+    cbm_setenv("HOME", tmpdir, 1);
+    cbm_setenv("SHELL", "/bin/zsh", 1);
+
+    char cache_dir[512];
+    char install_dir[512];
+    char target_path[640];
+    char candidate_path[640];
+    char shell_rc[512];
+    char self_path[640] = {0};
+    snprintf(cache_dir, sizeof(cache_dir), "%s/cache", tmpdir);
+    snprintf(install_dir, sizeof(install_dir), "%s/custom/bin", tmpdir);
+#ifdef _WIN32
+    snprintf(target_path, sizeof(target_path), "%s/codebase-memory-mcp.exe", install_dir);
+#else
+    snprintf(target_path, sizeof(target_path), "%s/codebase-memory-mcp", install_dir);
+#endif
+    snprintf(candidate_path, sizeof(candidate_path), "%s/rollback-candidate", tmpdir);
+    snprintf(shell_rc, sizeof(shell_rc), "%s/.zshrc", tmpdir);
+    cbm_setenv("CBM_CACHE_DIR", cache_dir, 1);
+    test_mkdirp(install_dir);
+    write_test_file(target_path, "old target bytes");
+    write_test_file(shell_rc, "# shell profile must remain byte-identical\n");
+
+    bool self_found = cbm_http_server_resolve_binary_path(NULL, self_path, sizeof(self_path));
+    int copy_rc = self_found ? cbm_copy_file(self_path, candidate_path) : -1;
+    const char *marker = "codebase-memory-mcp test-runner";
+    bool marker_available = copy_rc == 0 && test_binary_file_contains(candidate_path, marker);
+#ifndef _WIN32
+    (void)chmod(candidate_path, 0755);
+#endif
+
+    cli_activation_fake_t fake = {
+        .mutation_reserve_result = 1,
+    };
+    cbm_cli_activation_ops_t ops = cli_activation_fake_ops(&fake);
+    cbm_cli_set_activation_ops_for_test(&ops);
+    char dir_arg[640];
+    char candidate_arg[700];
+    char candidate_sha_arg[96];
+    char candidate_fingerprint[CBM_DAEMON_BUILD_FINGERPRINT_SIZE] = {0};
+    char original_target_fingerprint[CBM_DAEMON_BUILD_FINGERPRINT_SIZE] = {0};
+    bool fingerprints_available =
+        cbm_daemon_build_fingerprint_file(candidate_path, candidate_fingerprint) &&
+        cbm_daemon_build_fingerprint_file(target_path, original_target_fingerprint);
+    snprintf(dir_arg, sizeof(dir_arg), "--dir=%s", install_dir);
+    snprintf(candidate_arg, sizeof(candidate_arg), "--candidate=%s", candidate_path);
+    snprintf(candidate_sha_arg, sizeof(candidate_sha_arg), "--candidate-sha256=%s",
+             candidate_fingerprint);
+    char wrong_sha_arg[] =
+        "--candidate-sha256=0000000000000000000000000000000000000000000000000000000000000000";
+    char *dry_wrong_argv[] = {"--force",      "--skip-config", "--skip-path",
+                              "--dry-run",    candidate_arg,    wrong_sha_arg,
+                              dir_arg,        "--yes"};
+    int dry_wrong_sha_rc = marker_available && fingerprints_available
+                               ? cli_test_cmd_install(8, dry_wrong_argv)
+                               : -1;
+    char dry_target_fingerprint[CBM_DAEMON_BUILD_FINGERPRINT_SIZE] = {0};
+    bool dry_target_preserved =
+        cbm_daemon_build_fingerprint_file(target_path, dry_target_fingerprint) &&
+        strcmp(dry_target_fingerprint, original_target_fingerprint) == 0;
+    char *dry_valid_argv[] = {"--force",      "--skip-config", "--skip-path",
+                              "--dry-run",    candidate_arg,    candidate_sha_arg,
+                              dir_arg,        "--yes"};
+    int dry_valid_rc = marker_available && fingerprints_available
+                           ? cli_test_cmd_install(8, dry_valid_argv)
+                           : -1;
+    char missing_candidate_arg[700];
+    snprintf(missing_candidate_arg, sizeof(missing_candidate_arg),
+             "--candidate=%s/missing-candidate", tmpdir);
+    char *dry_missing_argv[] = {"--force",   "--skip-config", "--skip-path", "--dry-run",
+                                missing_candidate_arg, dir_arg, "--yes"};
+    int dry_missing_rc = cli_test_cmd_install(7, dry_missing_argv);
+    char dry_hardlink_path[640];
+    char dry_hardlink_arg[700];
+    snprintf(dry_hardlink_path, sizeof(dry_hardlink_path), "%s/candidate-dry-hardlink",
+             tmpdir);
+#ifdef _WIN32
+    wchar_t *wide_dry_hardlink = cbm_utf8_to_wide(dry_hardlink_path);
+    wchar_t *wide_candidate = cbm_utf8_to_wide(candidate_path);
+    bool dry_hardlink_created = wide_dry_hardlink && wide_candidate &&
+                                CreateHardLinkW(wide_dry_hardlink, wide_candidate, NULL) != 0;
+    free(wide_dry_hardlink);
+    free(wide_candidate);
+#else
+    bool dry_hardlink_created = link(candidate_path, dry_hardlink_path) == 0;
+#endif
+    snprintf(dry_hardlink_arg, sizeof(dry_hardlink_arg), "--candidate=%s",
+             dry_hardlink_path);
+    char *dry_hardlink_argv[] = {"--force",         "--skip-config", "--skip-path",
+                                 "--dry-run",       dry_hardlink_arg, candidate_sha_arg,
+                                 dir_arg,           "--yes"};
+    int dry_hardlink_rc =
+        dry_hardlink_created ? cli_test_cmd_install(8, dry_hardlink_argv) : -1;
+    if (dry_hardlink_created) {
+        (void)remove(dry_hardlink_path);
+    }
+    int dry_wrong_reserve_calls = fake.mutation_reserve_count;
+    char same_candidate_arg[700];
+    snprintf(same_candidate_arg, sizeof(same_candidate_arg), "--candidate=%s", target_path);
+    char *same_argv[] = {"--force",      "--skip-config", "--skip-path", same_candidate_arg,
+                         wrong_sha_arg, dir_arg,           "--yes"};
+    int same_candidate_rc =
+        fingerprints_available ? cli_test_cmd_install(7, same_argv) : -1;
+    char hardlink_path[640];
+    char hardlink_arg[700];
+    char target_sha_arg[96];
+    snprintf(hardlink_path, sizeof(hardlink_path), "%s/candidate-hardlink", tmpdir);
+#ifdef _WIN32
+    wchar_t *wide_hardlink = cbm_utf8_to_wide(hardlink_path);
+    wchar_t *wide_target = cbm_utf8_to_wide(target_path);
+    bool hardlink_created = wide_hardlink && wide_target &&
+                            CreateHardLinkW(wide_hardlink, wide_target, NULL) != 0;
+    free(wide_hardlink);
+    free(wide_target);
+#else
+    bool hardlink_created = link(target_path, hardlink_path) == 0;
+#endif
+    snprintf(hardlink_arg, sizeof(hardlink_arg), "--candidate=%s", hardlink_path);
+    snprintf(target_sha_arg, sizeof(target_sha_arg), "--candidate-sha256=%s",
+             original_target_fingerprint);
+    char *hardlink_argv[] = {"--force",      "--skip-config", "--skip-path", hardlink_arg,
+                             target_sha_arg, dir_arg,           "--yes"};
+    int hardlink_candidate_rc =
+        hardlink_created ? cli_test_cmd_install(7, hardlink_argv) : -1;
+    if (hardlink_created) {
+        (void)remove(hardlink_path);
+    }
+    char *wrong_argv[] = {"--force",      "--skip-config", "--skip-path", candidate_arg,
+                          wrong_sha_arg, dir_arg,           "--yes"};
+    int mismatch_rc = marker_available && fingerprints_available
+                          ? cli_test_cmd_install(7, wrong_argv)
+                          : -1;
+    char mismatch_target_fingerprint[CBM_DAEMON_BUILD_FINGERPRINT_SIZE] = {0};
+    bool mismatch_preserved =
+        cbm_daemon_build_fingerprint_file(target_path, mismatch_target_fingerprint) &&
+        strcmp(original_target_fingerprint, mismatch_target_fingerprint) == 0;
+    char *argv[] = {"--force",          "--skip-config", "--skip-path", candidate_arg,
+                    candidate_sha_arg, dir_arg,           "--yes"};
+#ifndef _WIN32
+    FILE *capture = tmpfile();
+    int saved_stdout = capture ? dup(STDOUT_FILENO) : -1;
+    bool redirected = false;
+    if (capture && saved_stdout >= 0) {
+        fflush(stdout);
+        redirected = dup2(fileno(capture), STDOUT_FILENO) >= 0;
+    }
+    int rc = marker_available && fingerprints_available && redirected
+                 ? cli_test_cmd_install(7, argv)
+                 : -1;
+    if (redirected) {
+        fflush(stdout);
+        (void)dup2(saved_stdout, STDOUT_FILENO);
+    }
+    if (saved_stdout >= 0) {
+        close(saved_stdout);
+    }
+    char output[4096] = {0};
+    if (capture) {
+        rewind(capture);
+        size_t count = fread(output, 1, sizeof(output) - 1U, capture);
+        output[count] = '\0';
+        fclose(capture);
+    }
+    bool shell_reload_hidden = strstr(output, "Restart your shell") == NULL &&
+                               strstr(output, "source ") == NULL;
+#else
+    int rc = marker_available && fingerprints_available ? cli_test_cmd_install(7, argv) : -1;
+    bool shell_reload_hidden = true;
+#endif
+    cbm_cli_set_activation_ops_for_test(NULL);
+    cbm_set_auto_answer_for_test(0);
+
+    bool marker_installed = test_binary_file_contains(target_path, marker);
+    char target_fingerprint[CBM_DAEMON_BUILD_FINGERPRINT_SIZE] = {0};
+    bool exact_bytes = cbm_daemon_build_fingerprint_file(candidate_path, candidate_fingerprint) &&
+                       cbm_daemon_build_fingerprint_file(target_path, target_fingerprint) &&
+                       strcmp(candidate_fingerprint, target_fingerprint) == 0;
+    const char *shell_data = read_test_file(shell_rc);
+    bool shell_unchanged = shell_data &&
+                           strcmp(shell_data, "# shell profile must remain byte-identical\n") == 0;
+    if (old_shell) {
+        cbm_setenv("SHELL", old_shell, 1);
+    } else {
+        cbm_unsetenv("SHELL");
+    }
+    free(old_shell);
+    cli_activation_restore_env(old_home, old_cache);
+    test_rmdir_r(tmpdir);
+
+    ASSERT_EQ(dry_wrong_sha_rc, 1);
+    ASSERT_TRUE(dry_target_preserved);
+    ASSERT_EQ(dry_valid_rc, 0);
+    ASSERT_EQ(dry_missing_rc, 1);
+    ASSERT_EQ(dry_hardlink_rc, 1);
+    ASSERT_EQ(dry_wrong_reserve_calls, 0);
+    ASSERT_EQ(same_candidate_rc, 1);
+    ASSERT_EQ(hardlink_candidate_rc, 1);
+    ASSERT_EQ(mismatch_rc, 1);
+    ASSERT_TRUE(mismatch_preserved);
+    ASSERT_EQ(rc, 0);
+    ASSERT_TRUE(marker_installed);
+    ASSERT_TRUE(exact_bytes);
+    ASSERT_TRUE(shell_unchanged);
+    ASSERT_TRUE(shell_reload_hidden);
+    ASSERT_EQ(fake.mutation_reserve_count, 1);
+    ASSERT_EQ(fake.mutation_lease_release_count, 1);
+    PASS();
+}
+
+TEST(cli_install_candidate_digest_survives_out_of_line_restaging) {
+    char tmpdir[256];
+    snprintf(tmpdir, sizeof(tmpdir), "/tmp/cli-candidate-restage-XXXXXX");
+    if (!cbm_mkdtemp(tmpdir)) {
+        FAIL("cbm_mkdtemp failed");
+    }
+    char *old_home = NULL;
+    char *old_cache = NULL;
+    cli_activation_save_env(&old_home, &old_cache);
+    cbm_setenv("HOME", tmpdir, 1);
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof(cache_dir), "%s/cache", tmpdir);
+    cbm_setenv("CBM_CACHE_DIR", cache_dir, 1);
+    test_mkdirp(cache_dir);
+
+    char install_dir[512];
+    char target_path[640];
+    char candidate_path[640];
+    char replacement_path[640];
+    snprintf(install_dir, sizeof(install_dir), "%s/missing/bin", tmpdir);
+#ifdef _WIN32
+    snprintf(target_path, sizeof(target_path), "%s/codebase-memory-mcp.exe", install_dir);
+#else
+    snprintf(target_path, sizeof(target_path), "%s/codebase-memory-mcp", install_dir);
+#endif
+    snprintf(candidate_path, sizeof(candidate_path), "%s/candidate", tmpdir);
+    snprintf(replacement_path, sizeof(replacement_path), "%s/replacement", tmpdir);
+    write_test_file(candidate_path, "authoritative rollback candidate bytes\n");
+    write_test_file(replacement_path, "swapped private candidate bytes\n");
+#ifndef _WIN32
+    (void)chmod(candidate_path, 0755);
+    (void)chmod(replacement_path, 0755);
+#endif
+
+    char candidate_fingerprint[CBM_DAEMON_BUILD_FINGERPRINT_SIZE] = {0};
+    bool fingerprint_available =
+        cbm_daemon_build_fingerprint_file(candidate_path, candidate_fingerprint);
+    char dir_arg[640];
+    char candidate_arg[700];
+    char candidate_sha_arg[96];
+    snprintf(dir_arg, sizeof(dir_arg), "--dir=%s", install_dir);
+    snprintf(candidate_arg, sizeof(candidate_arg), "--candidate=%s", candidate_path);
+    snprintf(candidate_sha_arg, sizeof(candidate_sha_arg), "--candidate-sha256=%s",
+             candidate_fingerprint);
+
+    const char *old_replacement_env =
+        getenv("CBM_CLI_TEST_PREPARED_CANDIDATE_REPLACEMENT");
+    char *saved_replacement_env =
+        old_replacement_env ? cbm_strdup(old_replacement_env) : NULL;
+    cbm_setenv("CBM_CLI_TEST_PREPARED_CANDIDATE_REPLACEMENT", replacement_path, 1);
+    cli_activation_fake_t fake = {
+        .mutation_reserve_result = 1,
+    };
+    cbm_cli_activation_ops_t ops = cli_activation_fake_ops(&fake);
+    cbm_cli_set_activation_ops_for_test(&ops);
+    char *argv[] = {"--force",          "--skip-config", "--skip-path", candidate_arg,
+                    candidate_sha_arg, dir_arg,           "--yes"};
+    int rc = fingerprint_available ? cli_test_cmd_install(7, argv) : -1;
+    cbm_cli_set_activation_ops_for_test(NULL);
+    if (saved_replacement_env) {
+        cbm_setenv("CBM_CLI_TEST_PREPARED_CANDIDATE_REPLACEMENT", saved_replacement_env, 1);
+    } else {
+        cbm_unsetenv("CBM_CLI_TEST_PREPARED_CANDIDATE_REPLACEMENT");
+    }
+    free(saved_replacement_env);
+
+    struct stat status;
+    bool target_absent = stat(target_path, &status) != 0;
+    bool install_dir_absent = stat(install_dir, &status) != 0;
+    cli_activation_restore_env(old_home, old_cache);
+    test_rmdir_r(tmpdir);
+
+    ASSERT_EQ(rc, 1);
+    ASSERT_TRUE(target_absent);
+    ASSERT_TRUE(install_dir_absent);
+    ASSERT_EQ(fake.mutation_reserve_count, 0);
+    PASS();
+}
+
 TEST(cli_activation_commands_reject_malformed_and_unknown_flags) {
     cli_activation_fake_t fake = {
         .mutation_reserve_result = 1,
@@ -1069,11 +1406,24 @@ TEST(cli_activation_commands_reject_malformed_and_unknown_flags) {
     cbm_cli_set_activation_ops_for_test(&ops);
     char *missing_dir[] = {"--dir"};
     char *empty_dir[] = {"--dir="};
+    char *missing_candidate[] = {"--candidate"};
+    char *empty_candidate[] = {"--candidate="};
+    char *sha_without_candidate[] = {
+        "--candidate-sha256=0000000000000000000000000000000000000000000000000000000000000000"};
+    char *short_candidate_sha[] = {"--candidate=/tmp/candidate", "--candidate-sha256=abc"};
+    char *nonhex_candidate_sha[] = {
+        "--candidate=/tmp/candidate",
+        "--candidate-sha256=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"};
     char *bad_install[] = {"--skip-config=value"};
     char *bad_update[] = {"--not-an-update-option"};
     char *bad_uninstall[] = {"--not-an-uninstall-option"};
     int missing_rc = cli_test_cmd_install(1, missing_dir);
     int empty_rc = cli_test_cmd_install(1, empty_dir);
+    int missing_candidate_rc = cli_test_cmd_install(1, missing_candidate);
+    int empty_candidate_rc = cli_test_cmd_install(1, empty_candidate);
+    int sha_without_candidate_rc = cli_test_cmd_install(1, sha_without_candidate);
+    int short_candidate_sha_rc = cli_test_cmd_install(2, short_candidate_sha);
+    int nonhex_candidate_sha_rc = cli_test_cmd_install(2, nonhex_candidate_sha);
     int install_rc = cli_test_cmd_install(1, bad_install);
     int update_rc = cli_test_cmd_update(1, bad_update);
     int uninstall_rc = cli_test_cmd_uninstall(1, bad_uninstall);
@@ -1081,6 +1431,11 @@ TEST(cli_activation_commands_reject_malformed_and_unknown_flags) {
 
     ASSERT_EQ(missing_rc, 1);
     ASSERT_EQ(empty_rc, 1);
+    ASSERT_EQ(missing_candidate_rc, 1);
+    ASSERT_EQ(empty_candidate_rc, 1);
+    ASSERT_EQ(sha_without_candidate_rc, 1);
+    ASSERT_EQ(short_candidate_sha_rc, 1);
+    ASSERT_EQ(nonhex_candidate_sha_rc, 1);
     ASSERT_EQ(install_rc, 1);
     ASSERT_EQ(update_rc, 1);
     ASSERT_EQ(uninstall_rc, 1);
@@ -11964,6 +12319,7 @@ SUITE(cli) {
     RUN_TEST(cli_install_force_quiesces_active_cohort_before_replacing_binary);
     RUN_TEST(cli_install_dir_and_skip_config_stage_first_install_safely);
     RUN_TEST(cli_activation_commands_reject_malformed_and_unknown_flags);
+    RUN_TEST(cli_install_candidate_digest_survives_out_of_line_restaging);
     RUN_TEST(cli_install_reset_deletion_waits_for_final_activation_guard);
     RUN_TEST(cli_install_config_only_waits_for_cohort_drain);
     RUN_TEST(cli_install_config_and_path_finish_before_guard_release);
@@ -12291,4 +12647,7 @@ SUITE(cli) {
     RUN_TEST(cli_build_args_json_key_equals_value_issue680);
     RUN_TEST(cli_build_args_json_bad_positional_errors_issue680);
     RUN_TEST(cli_print_tool_help_issue680);
+
+    /* Jynx rollback candidate activation stays last for focused CI diagnostics. */
+    RUN_TEST(cli_install_candidate_and_skip_path_restore_verified_binary_in_place);
 }
