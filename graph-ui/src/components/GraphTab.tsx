@@ -57,6 +57,7 @@ function saveNodeBudget(project: string, value: number) {
 
 interface GraphTabProps {
   project: string | null;
+  focusMode?: boolean;
 }
 
 export function formatGraphLimitNotice(data: GraphData | null): string | null {
@@ -64,7 +65,7 @@ export function formatGraphLimitNotice(data: GraphData | null): string | null {
   return `Showing ${data.nodes.length.toLocaleString("en-US")} of ${data.total_nodes.toLocaleString("en-US")} nodes (${data.edges.length.toLocaleString("en-US")} edges). Raise the node budget or use filters.`;
 }
 
-export function GraphTab({ project }: GraphTabProps) {
+export function GraphTab({ project, focusMode = false }: GraphTabProps) {
   const { data, loading, error, progress, fetchOverview } = useGraphData();
   const [highlightedIds, setHighlightedIds] = useState<Set<number> | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -390,49 +391,55 @@ export function GraphTab({ project }: GraphTabProps) {
 
   return (
     <div className="h-full flex">
-      {/* Left sidebar — resizable */}
-      <div
-        className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
-        style={{ width: leftWidth }}
-      >
-        <FilterPanel
-          data={data}
-          enabledLabels={enabledLabels}
-          enabledEdgeTypes={enabledEdgeTypes}
-          showLabels={showLabels}
-          onToggleLabel={toggleLabel}
-          onToggleEdgeType={toggleEdgeType}
-          onToggleShowLabels={() => setShowLabels((v) => !v)}
-          onEnableAll={enableAll}
-          onDisableAll={disableAll}
-          deadCodeView={deadCodeView}
-          showOnlyDead={showOnlyDead}
-          hideEntryPoints={hideEntryPoints}
-          hideTests={hideTests}
-          onToggleDeadCodeView={() => setDeadCodeView((v) => !v)}
-          onToggleShowOnlyDead={() => setShowOnlyDead((v) => !v)}
-          onToggleHideEntryPoints={() => setHideEntryPoints((v) => !v)}
-          onToggleHideTests={() => setHideTests((v) => !v)}
-          missedView={showMissedSkeleton}
-          missedCount={data?.missed_graph?.nodes.filter((n) => n.label === "File").length ?? 0}
-          onToggleMissedView={() => setShowMissedSkeleton((v) => !v)}
-        />
-        <Sidebar
-          nodes={filteredData.nodes}
-          onSelectPath={handleSelectPath}
-          selectedPath={selectedPath}
-        />
-      </div>
-      <ResizeHandle
-        side="left"
-        onResize={(d) => {
-          setLeftWidth((w) => {
-            const nw = Math.max(150, Math.min(500, w + d));
-            saveWidth("cbm-left-w", nw);
-            return nw;
-          });
-        }}
-      />
+      {!focusMode && (
+        <>
+          {/* Left sidebar — resizable */}
+          <div
+            className="border-r border-border/30 flex flex-col h-full bg-sidebar/90 backdrop-blur-md shrink-0"
+            style={{ width: leftWidth }}
+          >
+            <FilterPanel
+              data={data}
+              enabledLabels={enabledLabels}
+              enabledEdgeTypes={enabledEdgeTypes}
+              showLabels={showLabels}
+              onToggleLabel={toggleLabel}
+              onToggleEdgeType={toggleEdgeType}
+              onToggleShowLabels={() => setShowLabels((v) => !v)}
+              onEnableAll={enableAll}
+              onDisableAll={disableAll}
+              deadCodeView={deadCodeView}
+              showOnlyDead={showOnlyDead}
+              hideEntryPoints={hideEntryPoints}
+              hideTests={hideTests}
+              onToggleDeadCodeView={() => setDeadCodeView((v) => !v)}
+              onToggleShowOnlyDead={() => setShowOnlyDead((v) => !v)}
+              onToggleHideEntryPoints={() => setHideEntryPoints((v) => !v)}
+              onToggleHideTests={() => setHideTests((v) => !v)}
+              missedView={showMissedSkeleton}
+              missedCount={
+                data?.missed_graph?.nodes.filter((n) => n.label === "File").length ?? 0
+              }
+              onToggleMissedView={() => setShowMissedSkeleton((v) => !v)}
+            />
+            <Sidebar
+              nodes={filteredData.nodes}
+              onSelectPath={handleSelectPath}
+              selectedPath={selectedPath}
+            />
+          </div>
+          <ResizeHandle
+            side="left"
+            onResize={(d) => {
+              setLeftWidth((w) => {
+                const nw = Math.max(150, Math.min(500, w + d));
+                saveWidth("cbm-left-w", nw);
+                return nw;
+              });
+            }}
+          />
+        </>
+      )}
 
       {/* Graph area */}
       <div className="flex-1 relative overflow-hidden">
@@ -481,67 +488,69 @@ export function GraphTab({ project }: GraphTabProps) {
               )}
             </div>
 
-            <div className="absolute top-4 right-4 flex gap-2 items-center">
-              {highlightedIds && (
+            {!focusMode && (
+              <div className="absolute top-4 right-4 flex gap-2 items-center">
+                {highlightedIds && (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setHighlightedIds(null);
+                      setSelectedPath(null);
+                      setSelectedNode(null);
+                      setCameraTarget(null);
+                    }}
+                  >
+                    Clear selection
+                  </Button>
+                )}
+                <div className="flex items-center gap-1.5 h-8 px-2 rounded-md border border-border/50 bg-card/80 backdrop-blur-sm">
+                  <label
+                    htmlFor="node-budget"
+                    className="text-[10px] uppercase tracking-wider text-white/40"
+                  >
+                    Nodes
+                  </label>
+                  <input
+                    id="node-budget"
+                    type="number"
+                    min={GRAPH_NODE_BUDGET_STEP}
+                    max={GRAPH_NODE_BUDGET_MAX}
+                    step={GRAPH_NODE_BUDGET_STEP}
+                    value={budgetDraft}
+                    onChange={(e) => setBudgetDraft(e.target.value)}
+                    onBlur={commitBudget}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    className="w-24 bg-transparent text-right text-xs font-mono text-accent/90 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    aria-label="Node budget: how many nodes to load"
+                    title="How many nodes to load (5,000 steps, edges between loaded nodes follow automatically)"
+                  />
+                </div>
+                <DisplaySettingsMenu settings={display} onChange={updateDisplay} />
                 <Button
+                  variant="outline"
                   size="sm"
                   onClick={() => {
                     setHighlightedIds(null);
                     setSelectedPath(null);
                     setSelectedNode(null);
                     setCameraTarget(null);
+                    fetchOverview(project, budget.value);
                   }}
                 >
-                  Clear selection
+                  Refresh
                 </Button>
-              )}
-              <div className="flex items-center gap-1.5 h-8 px-2 rounded-md border border-border/50 bg-card/80 backdrop-blur-sm">
-                <label
-                  htmlFor="node-budget"
-                  className="text-[10px] uppercase tracking-wider text-white/40"
-                >
-                  Nodes
-                </label>
-                <input
-                  id="node-budget"
-                  type="number"
-                  min={GRAPH_NODE_BUDGET_STEP}
-                  max={GRAPH_NODE_BUDGET_MAX}
-                  step={GRAPH_NODE_BUDGET_STEP}
-                  value={budgetDraft}
-                  onChange={(e) => setBudgetDraft(e.target.value)}
-                  onBlur={commitBudget}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur();
-                    }
-                  }}
-                  className="w-24 bg-transparent text-right text-xs font-mono text-accent/90 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  aria-label="Node budget: how many nodes to load"
-                  title="How many nodes to load (5,000 steps, edges between loaded nodes follow automatically)"
-                />
               </div>
-              <DisplaySettingsMenu settings={display} onChange={updateDisplay} />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setHighlightedIds(null);
-                  setSelectedPath(null);
-                  setSelectedNode(null);
-                  setCameraTarget(null);
-                  fetchOverview(project, budget.value);
-                }}
-              >
-                Refresh
-              </Button>
-            </div>
+            )}
           </>
         )}
       </div>
 
       {/* Right detail panel — resizable */}
-      {selectedNode && filteredData && (
+      {!focusMode && selectedNode && filteredData && (
         <>
           <ResizeHandle
             side="right"

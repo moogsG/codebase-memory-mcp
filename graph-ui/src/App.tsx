@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GraphTab } from "./components/GraphTab";
 import { StatsTab } from "./components/StatsTab";
 import { ControlTab } from "./components/ControlTab";
 import { ThemeSelector } from "./components/ThemeSelector";
 import { BrandMark } from "./components/BrandMark";
+import { CommandPalette, type CommandAction } from "./components/CommandPalette";
 import type { TabId } from "./lib/types";
 import { useUiMessages } from "./lib/i18n";
 import {
   DEFAULT_THEME_ID,
+  THEMES,
   isThemeId,
   setTheme as persistTheme,
   type ThemeId,
@@ -41,11 +43,15 @@ function routeUrl(tab: TabId, project: string | null): string {
 export function App() {
   const t = useUiMessages();
   const [route, setRoute] = useState<RouteState>(readRoute);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const exitFocusButtonRef = useRef<HTMLButtonElement>(null);
   const [theme, setTheme] = useState<ThemeId>(() => {
     const active = document.documentElement.dataset.theme;
     return isThemeId(active) ? active : DEFAULT_THEME_ID;
   });
   const { tab: activeTab, project: selectedProject } = route;
+  const graphFocusMode = activeTab === "graph" && focusMode;
 
   const changeTheme = useCallback((nextTheme: ThemeId) => {
     persistTheme(nextTheme);
@@ -65,6 +71,10 @@ export function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== "graph") setFocusMode(false);
+  }, [activeTab]);
+
   /* Change the route and push a history entry (skips no-op navigations). */
   const navigate = useCallback((tab: TabId, project: string | null) => {
     const url = routeUrl(tab, project);
@@ -73,6 +83,64 @@ export function App() {
     window.history.pushState(null, "", url);
     setRoute({ tab, project });
   }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((open) => !open);
+      } else if (event.key === "Escape" && graphFocusMode && !commandPaletteOpen) {
+        event.preventDefault();
+        setFocusMode(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [commandPaletteOpen, graphFocusMode]);
+
+  const commands = useMemo<CommandAction[]>(
+    () => [
+      {
+        id: "open-projects",
+        label: "Open Projects",
+        keywords: ["stats", "repositories"],
+        run: () => navigate("stats", null),
+      },
+      ...(selectedProject
+        ? [
+            {
+              id: "open-graph",
+              label: "Open Graph",
+              keywords: ["project", "observatory", selectedProject],
+              run: () => navigate("graph", selectedProject),
+            },
+          ]
+        : []),
+      {
+        id: "open-control",
+        label: "Open Control",
+        keywords: ["processes", "system"],
+        run: () => navigate("control", selectedProject),
+      },
+      ...(activeTab === "graph" && selectedProject
+        ? [
+            {
+              id: "toggle-focus-mode",
+              label: graphFocusMode ? "Exit Focus Mode" : "Enter Focus Mode",
+              keywords: ["focus", "zen", "fullscreen", "distraction"],
+              run: () => setFocusMode((enabled) => !enabled),
+            },
+          ]
+        : []),
+      ...THEMES.map((definition) => ({
+        id: `theme-${definition.id}`,
+        label: `Apply ${definition.name} Theme`,
+        keywords: ["theme", "appearance", definition.id],
+        run: () => changeTheme(definition.id),
+      })),
+    ],
+    [activeTab, changeTheme, graphFocusMode, navigate, selectedProject],
+  );
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "graph", label: t.tabs.graph },
@@ -83,7 +151,8 @@ export function App() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
       {/* Header */}
-      <header className="relative z-50 flex items-center justify-between px-5 h-12 border-b border-border bg-sidebar/80 backdrop-blur-md shrink-0">
+      {!graphFocusMode && (
+        <header className="relative z-50 flex items-center justify-between px-5 h-12 border-b border-border bg-sidebar/80 backdrop-blur-md shrink-0">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2.5">
             <BrandMark className="h-5 w-5 shrink-0" />
@@ -139,14 +208,30 @@ export function App() {
               </button>
             </div>
           )}
+          <button
+            type="button"
+            aria-label="Open command palette"
+            aria-keyshortcuts="Meta+K Control+K"
+            onClick={(event) => {
+              event.currentTarget.focus();
+              setCommandPaletteOpen(true);
+            }}
+            className="hidden h-8 items-center gap-2 rounded-md border border-border/60 bg-card/55 px-2.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex"
+          >
+            <span>Commands</span>
+            <kbd className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
+              ⌘K
+            </kbd>
+          </button>
           <ThemeSelector value={theme} onChange={changeTheme} />
         </div>
-      </header>
+        </header>
+      )}
 
       {/* Content */}
       <main className="flex-1 min-h-0">
         {activeTab === "graph" ? (
-          <GraphTab project={selectedProject} />
+          <GraphTab project={selectedProject} focusMode={graphFocusMode} />
         ) : activeTab === "control" ? (
           <ControlTab />
         ) : (
@@ -155,6 +240,23 @@ export function App() {
           />
         )}
       </main>
+      {graphFocusMode && (
+        <button
+          ref={exitFocusButtonRef}
+          type="button"
+          aria-label="Exit Focus Mode"
+          onClick={() => setFocusMode(false)}
+          className="fixed right-3 top-3 z-50 rounded-md border border-border/60 bg-card/75 px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground opacity-55 backdrop-blur-md transition-all hover:border-primary/45 hover:text-foreground hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Exit focus <kbd className="ml-1 font-mono normal-case">Esc</kbd>
+        </button>
+      )}
+      <CommandPalette
+        open={commandPaletteOpen}
+        actions={commands}
+        onOpenChange={setCommandPaletteOpen}
+        fallbackFocusRef={exitFocusButtonRef}
+      />
     </div>
   );
 }
